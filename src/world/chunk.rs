@@ -44,73 +44,77 @@ impl Chunk {
     }
 }
 
-const FACES: [([f32; 3], [[f32; 3]; 4], [[f32; 2]; 4]); 6] = [
-    // +Y (top)
+const FACES: [([f32; 3], [[f32; 3]; 4]); 6] = [
+    // +Y top: CCW from above
     (
         [0.0, 1.0, 0.0],
         [
-            [0.0, 1.0, 0.0],
-            [1.0, 1.0, 0.0],
-            [1.0, 1.0, 1.0],
             [0.0, 1.0, 1.0],
+            [1.0, 1.0, 1.0],
+            [1.0, 1.0, 0.0],
+            [0.0, 1.0, 0.0],
         ],
-        [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
     ),
-    // -Y (bottom)
+    // -Y bottom: CCW from below
     (
         [0.0, -1.0, 0.0],
         [
-            [0.0, 0.0, 1.0],
-            [1.0, 0.0, 1.0],
-            [1.0, 0.0, 0.0],
             [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [1.0, 0.0, 1.0],
+            [0.0, 0.0, 1.0],
         ],
-        [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
     ),
-    // +X (right)
+    // +X right: CCW from right
     (
         [1.0, 0.0, 0.0],
         [
-            [1.0, 0.0, 0.0],
-            [1.0, 1.0, 0.0],
-            [1.0, 1.0, 1.0],
             [1.0, 0.0, 1.0],
+            [1.0, 1.0, 1.0],
+            [1.0, 1.0, 0.0],
+            [1.0, 0.0, 0.0],
         ],
-        [[0.0, 0.0], [0.0, 1.0], [1.0, 1.0], [1.0, 0.0]],
     ),
-    // -X (left)
+    // -X left: CCW from left
     (
         [-1.0, 0.0, 0.0],
         [
-            [0.0, 0.0, 1.0],
-            [0.0, 1.0, 1.0],
-            [0.0, 1.0, 0.0],
             [0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 1.0, 1.0],
+            [0.0, 0.0, 1.0],
         ],
-        [[0.0, 0.0], [0.0, 1.0], [1.0, 1.0], [1.0, 0.0]],
     ),
-    // +Z (front)
+    // +Z front: CCW from front
     (
         [0.0, 0.0, 1.0],
         [
+            [0.0, 0.0, 1.0],
             [1.0, 0.0, 1.0],
             [1.0, 1.0, 1.0],
             [0.0, 1.0, 1.0],
-            [0.0, 0.0, 1.0],
         ],
-        [[0.0, 0.0], [0.0, 1.0], [1.0, 1.0], [1.0, 0.0]],
     ),
-    // -Z (back)
+    // -Z back: CCW from back
     (
         [0.0, 0.0, -1.0],
         [
+            [1.0, 0.0, 0.0],
             [0.0, 0.0, 0.0],
             [0.0, 1.0, 0.0],
             [1.0, 1.0, 0.0],
-            [1.0, 0.0, 0.0],
         ],
-        [[0.0, 0.0], [0.0, 1.0], [1.0, 1.0], [1.0, 0.0]],
     ),
+];
+
+// Ambient occlusion-style brightness per face to give depth without textures
+const FACE_BRIGHTNESS: [f32; 6] = [
+    1.0, // top
+    0.5, // bottom
+    0.8, // right
+    0.8, // left
+    0.9, // front
+    0.7, // back
 ];
 
 pub fn build_chunk_mesh(chunk: &Chunk, registry: &BlockRegistry) -> Mesh {
@@ -127,8 +131,10 @@ pub fn build_chunk_mesh(chunk: &Chunk, registry: &BlockRegistry) -> Mesh {
                 if block == BlockType::Air {
                     continue;
                 }
-                let color = registry.color(block);
-                for (normal, verts, face_uvs) in &FACES {
+
+                let base_color = registry.linear_color(block);
+
+                for (face_idx, (normal, verts)) in FACES.iter().enumerate() {
                     let nx = x as i32 + normal[0] as i32;
                     let ny = y as i32 + normal[1] as i32;
                     let nz = z as i32 + normal[2] as i32;
@@ -143,15 +149,22 @@ pub fn build_chunk_mesh(chunk: &Chunk, registry: &BlockRegistry) -> Mesh {
                         continue;
                     }
 
+                    let brightness = FACE_BRIGHTNESS[face_idx];
+                    let color = [
+                        base_color[0] * brightness,
+                        base_color[1] * brightness,
+                        base_color[2] * brightness,
+                        base_color[3],
+                    ];
+
                     let base = positions.len() as u32;
                     for v in verts {
                         positions.push([v[0] + x as f32, v[1] + y as f32, v[2] + z as f32]);
                         normals.push(*normal);
                         colors.push(color);
+                        uvs.push([0.0, 0.0]);
                     }
-                    for uv in face_uvs {
-                        uvs.push(*uv);
-                    }
+                    // CCW winding: 0,1,2 and 0,2,3
                     indices.extend_from_slice(&[
                         base,
                         base + 1,
