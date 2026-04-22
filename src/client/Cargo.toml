@@ -1,0 +1,10 @@
+[package]
+name    = "client"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+shared  = { path = "../shared" }
+bevy    = { workspace = true }
+bincode = { workspace = true }
+serde   = { workspace = true }
