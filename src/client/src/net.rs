@@ -58,7 +58,15 @@ pub struct NetPlugin;
 
 impl Plugin for NetPlugin {
     fn build(&self, app: &mut App) {
-        let server_addr = format!("127.0.0.1:{DEFAULT_PORT}");
+        let addr_arg = std::env::args()
+            .nth(2)
+            .unwrap_or_else(|| "127.0.0.1".into());
+
+        let server_addr = if addr_arg.contains(':') {
+            addr_arg
+        } else {
+            format!("{addr_arg}:{DEFAULT_PORT}")
+        };
         let (out_tx, out_rx) = mpsc::channel::<ClientPacket>();
         let (in_tx, in_rx) = mpsc::channel::<ServerPacket>();
 
