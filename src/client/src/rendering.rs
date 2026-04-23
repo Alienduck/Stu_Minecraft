@@ -12,7 +12,7 @@ impl Plugin for RenderingPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(ClearColor(Color::srgb(0.5, 0.7, 1.0)))
             .init_resource::<ServerTime>()
-            .add_systems(Startup, (spawn_lights, spawn_hud))
+            .add_systems(Startup, (spawn_lights, spawn_hud, spawn_celestial_bodies))
             .add_systems(
                 Update,
                 (
@@ -20,6 +20,7 @@ impl Plugin for RenderingPlugin {
                     update_break_progress,
                     sync_time_from_net,
                     update_day_night_cycle,
+                    super::player::apply_player_tints,
                 )
                     .chain(),
             );
@@ -42,6 +43,12 @@ fn sync_time_from_net(mut ev: MessageReader<crate::net::EvTimeUpdate>, mut st: R
 #[derive(Component)]
 struct Sun;
 
+#[derive(Component)]
+struct Moon;
+
+/// Orbit radius for both celestial bodies (large enough to always be visible).
+const ORBIT_RADIUS: f32 = 450.0;
+
 fn spawn_lights(mut commands: Commands) {
     commands.spawn((
         DirectionalLight {
@@ -58,6 +65,40 @@ fn spawn_lights(mut commands: Commands) {
         brightness: 150.0,
         ..default()
     });
+}
+
+fn spawn_celestial_bodies(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut mats: ResMut<Assets<StandardMaterial>>,
+) {
+    let sun_mesh = meshes.add(Sphere::new(18.0).mesh().ico(3).unwrap());
+    let sun_mat = mats.add(StandardMaterial {
+        base_color: Color::srgb(1.0, 0.95, 0.3),
+        emissive: LinearRgba::new(4.0, 3.6, 0.2, 1.0),
+        unlit: true,
+        ..default()
+    });
+    commands.spawn((
+        Mesh3d(sun_mesh),
+        MeshMaterial3d(sun_mat),
+        Transform::from_xyz(ORBIT_RADIUS, 0.0, 50.0),
+        Sun,
+    ));
+
+    let moon_mesh = meshes.add(Sphere::new(10.0).mesh().ico(2).unwrap());
+    let moon_mat = mats.add(StandardMaterial {
+        base_color: Color::srgb(0.85, 0.87, 0.92),
+        emissive: LinearRgba::new(0.15, 0.15, 0.20, 1.0),
+        unlit: true,
+        ..default()
+    });
+    commands.spawn((
+        Mesh3d(moon_mesh),
+        MeshMaterial3d(moon_mat),
+        Transform::from_xyz(-ORBIT_RADIUS, 0.0, 50.0),
+        Moon,
+    ));
 }
 
 #[derive(Component)]
@@ -81,7 +122,6 @@ fn spawn_hud(mut commands: Commands) {
             ..default()
         })
         .with_children(|p| {
-            // Horizontal bar
             p.spawn((
                 Node {
                     width: Val::Px(16.0),
@@ -90,7 +130,6 @@ fn spawn_hud(mut commands: Commands) {
                 },
                 BackgroundColor(Color::WHITE),
             ));
-            // Vertical bar
             p.spawn((
                 Node {
                     width: Val::Px(2.0),
@@ -211,8 +250,6 @@ fn update_break_progress(
         }
         Some(_) => {
             let pct = (state.progress / 2.0).clamp(0.0, 1.0);
-            // Bar grows from centre outward: offset by -60px so it looks centred
-            // TODO: use scaling instead of px
             node.width = Val::Px(pct * 120.0);
             *color = BackgroundColor(Color::srgba(1.0, 0.3 + pct * 0.4, 0.1, 0.9));
         }
@@ -222,33 +259,63 @@ fn update_break_progress(
 fn update_day_night_cycle(
     time: Res<Time>,
     mut st: ResMut<ServerTime>,
-    mut sun_query: Query<(&mut Transform, &mut DirectionalLight), With<Sun>>,
+    mut dir_light_q: Query<(&mut Transform, &mut DirectionalLight), With<Sun>>,
+    mut sun_mesh_q: Query<
+        &mut Transform,
+        (
+            With<Sun>,
+            With<Mesh3d>,
+            Without<DirectionalLight>,
+            Without<Moon>,
+        ),
+    >,
+    mut moon_mesh_q: Query<&mut Transform, (With<Moon>, Without<DirectionalLight>, Without<Sun>)>,
     mut ambient_query: Query<&mut AmbientLight>,
     mut clear_color: ResMut<ClearColor>,
 ) {
-    let Ok((mut transform, mut light)) = sun_query.single_mut() else {
-        return;
-    };
-
     st.local_timer += time.delta_secs();
     let current_time = st.base_time + st.local_timer;
 
-    let cycle_duration = 60.0;
+    let cycle_duration = 600.0;
     let t = (current_time % cycle_duration) / cycle_duration;
     let angle = t * PI * 2.0;
-    let sun_dist = 500.0;
 
-    transform.translation = Vec3::new(angle.cos() * sun_dist, angle.sin() * sun_dist, 50.0);
-    transform.look_at(Vec3::ZERO, Vec3::Y);
+    if let Ok((mut transform, mut light)) = dir_light_q.single_mut() {
+        let sun_dir = Vec3::new(angle.cos() * ORBIT_RADIUS, angle.sin() * ORBIT_RADIUS, 50.0);
+        transform.translation = sun_dir;
+        transform.look_at(Vec3::ZERO, Vec3::Y);
+
+        let sun_height = angle.sin(); // 1 = noon, -1 = midnight
+        light.illuminance = (sun_height * 20_000.0).max(0.0);
+    }
+
+    if let Ok(mut t) = sun_mesh_q.single_mut() {
+        t.translation = Vec3::new(angle.cos() * ORBIT_RADIUS, angle.sin() * ORBIT_RADIUS, 50.0);
+    }
+
+    if let Ok(mut t) = moon_mesh_q.single_mut() {
+        let moon_angle = angle + PI;
+        t.translation = Vec3::new(
+            moon_angle.cos() * ORBIT_RADIUS,
+            moon_angle.sin() * ORBIT_RADIUS,
+            50.0,
+        );
+    }
 
     let sun_height = angle.sin();
-    light.illuminance = (sun_height * 20_000.0).max(0.0);
-
     let day_factor = (sun_height * 2.0).clamp(0.0, 1.0);
 
     let day_sky = Vec3::new(0.5, 0.7, 1.0);
+    let dusk_sky = Vec3::new(0.55, 0.25, 0.08);
     let night_sky = Vec3::new(0.02, 0.02, 0.05);
-    let sky_rgb = night_sky.lerp(day_sky, day_factor);
+
+    let sky_rgb = if sun_height > 0.0 {
+        let dusk_factor = 1.0 - sun_height.abs().min(1.0);
+        day_sky.lerp(dusk_sky, dusk_factor * dusk_factor) * day_factor
+            + night_sky * (1.0 - day_factor)
+    } else {
+        night_sky
+    };
 
     *clear_color = ClearColor(Color::srgb(sky_rgb.x, sky_rgb.y, sky_rgb.z));
 
