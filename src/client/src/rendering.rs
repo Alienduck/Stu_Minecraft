@@ -3,7 +3,7 @@ use std::f32::consts::PI;
 
 use crate::{
     input::BreakState,
-    player::{inventory::Inventory, Player},
+    player::{Player, inventory::Inventory},
 };
 
 pub struct RenderingPlugin;
@@ -11,15 +11,31 @@ pub struct RenderingPlugin;
 impl Plugin for RenderingPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(ClearColor(Color::srgb(0.5, 0.7, 1.0)))
+            .init_resource::<ServerTime>()
             .add_systems(Startup, (spawn_lights, spawn_hud))
             .add_systems(
                 Update,
                 (
                     update_hotbar_ui,
                     update_break_progress,
+                    sync_time_from_net,
                     update_day_night_cycle,
-                ),
+                )
+                    .chain(),
             );
+    }
+}
+
+#[derive(Resource, Default)]
+struct ServerTime {
+    base_time: f32,
+    local_timer: f32,
+}
+
+fn sync_time_from_net(mut ev: MessageReader<crate::net::EvTimeUpdate>, mut st: ResMut<ServerTime>) {
+    if let Some(e) = ev.read().last() {
+        st.base_time = e.time;
+        st.local_timer = 0.0;
     }
 }
 
@@ -205,6 +221,7 @@ fn update_break_progress(
 
 fn update_day_night_cycle(
     time: Res<Time>,
+    mut st: ResMut<ServerTime>,
     mut sun_query: Query<(&mut Transform, &mut DirectionalLight), With<Sun>>,
     mut ambient_query: Query<&mut AmbientLight>,
     mut clear_color: ResMut<ClearColor>,
@@ -213,8 +230,11 @@ fn update_day_night_cycle(
         return;
     };
 
-    let cycle_duration = 120.0;
-    let t = (time.elapsed_secs() % cycle_duration) / cycle_duration;
+    st.local_timer += time.delta_secs();
+    let current_time = st.base_time + st.local_timer;
+
+    let cycle_duration = 60.0;
+    let t = (current_time % cycle_duration) / cycle_duration;
     let angle = t * PI * 2.0;
     let sun_dist = 500.0;
 
