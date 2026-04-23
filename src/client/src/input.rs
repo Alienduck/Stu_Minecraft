@@ -4,19 +4,11 @@ use bevy::{
     window::{CursorGrabMode, CursorOptions, PrimaryWindow},
 };
 
-use shared::{
-    block::BlockType,
-    chunk::{CHUNK_HEIGHT, CHUNK_SIZE},
-};
+use shared::chunk::{CHUNK_HEIGHT, CHUNK_SIZE};
 
 use crate::{
     net::NetSender,
-    player::{
-        Player,
-        camera::PlayerCamera,
-        controller::{block_at_world, is_solid_at},
-        inventory::Inventory,
-    },
+    player::{Player, camera::PlayerCamera, controller::block_at_world, inventory::Inventory},
     world::{Chunk, ChunkCoordComp},
 };
 
@@ -52,6 +44,7 @@ pub struct MovementInput {
     pub right: bool,
     pub jump: bool,
     pub sprinting: bool,
+    pub sneaking: bool,
     pub yaw: f32,
     pub pitch: f32,
 }
@@ -62,13 +55,11 @@ pub struct BreakState {
     pub progress: f32,
 }
 
-/// Simple window focus handler
 fn grab_cursor(mut cursor: Single<&mut CursorOptions, With<PrimaryWindow>>) {
     cursor.grab_mode = CursorGrabMode::Locked;
     cursor.visible = false;
 }
 
-/// Input focus window handler
 fn toggle_cursor_grab(
     keys: Res<ButtonInput<KeyCode>>,
     mut cursor: Single<&mut CursorOptions, With<PrimaryWindow>>,
@@ -91,6 +82,7 @@ fn handle_keyboard(keys: Res<ButtonInput<KeyCode>>, mut input: ResMut<MovementIn
     input.right = keys.pressed(KeyCode::KeyD);
     input.jump = keys.pressed(KeyCode::Space);
     input.sprinting = keys.pressed(KeyCode::ShiftLeft);
+    input.sneaking = keys.pressed(KeyCode::ControlLeft);
 }
 
 fn handle_mouse_look(
@@ -192,12 +184,10 @@ fn handle_breaking(
         state.target = None;
         state.progress = 0.0;
 
-        // Give the block directly to the player
         if let Ok(mut inv) = player.single_mut() {
             inv.add(block_type);
         }
 
-        // Send to the server and it tells to every else client
         let _ = sender.0.lock().unwrap().send(ClientPacket::BreakBlock {
             wx: target.x,
             wy: target.y,

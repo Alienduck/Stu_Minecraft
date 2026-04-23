@@ -26,19 +26,44 @@ pub struct Velocity(pub Vec3);
 #[derive(Component)]
 pub struct Grounded(pub bool);
 
+/// Tracks how many seconds since the player last stood on solid ground.
+/// Jump is allowed as long as this is below COYOTE_DURATION.
+#[derive(Component, Default)]
+pub struct CoyoteTime {
+    pub timer: f32,
+    /// True when the coyote jump has already been consumed this airborne phase.
+    pub consumed: bool,
+}
+
+/// Whether the player is currently sneaking (crouching).
+#[derive(Component)]
+pub struct Sneaking(pub bool);
+
 const GRAVITY: f32 = -28.0;
 const JUMP_FORCE: f32 = 9.0;
 const WALK_SPEED: f32 = 5.0;
 const SPRINT_SPEED: f32 = 9.0;
+/// Sneak speed is about 30% of walk speed (matches vanilla Minecraft feel).
+const SNEAK_SPEED: f32 = 1.5;
 const PLAYER_HEIGHT: f32 = 1.8;
 const PLAYER_WIDTH: f32 = 0.6;
+/// Duration (seconds) during which a jump is still valid after walking off an edge.
+const COYOTE_DURATION: f32 = 0.12;
 
-pub fn apply_gravity(time: Res<Time>, mut q: Query<(&mut Velocity, &mut Grounded), With<Player>>) {
-    for (mut vel, mut grounded) in q.iter_mut() {
-        if !grounded.0 {
+pub fn apply_gravity(
+    time: Res<Time>,
+    mut q: Query<(&mut Velocity, &mut Grounded, &mut CoyoteTime), With<Player>>,
+) {
+    for (mut vel, grounded, mut coyote) in q.iter_mut() {
+        if grounded.0 {
+            coyote.timer = 0.0;
+            coyote.consumed = false;
+            if vel.0.y < 0.0 {
+                vel.0.y = 0.0;
+            }
+        } else {
             vel.0.y += GRAVITY * time.delta_secs();
-        } else if vel.0.y < 0.0 {
-            vel.0.y = 0.0;
+            coyote.timer += time.delta_secs();
         }
     }
 }
@@ -47,12 +72,26 @@ pub fn move_player(
     time: Res<Time>,
     input: Res<MovementInput>,
     chunks: Query<(&Chunk, &ChunkCoordComp)>,
-    mut q: Query<(&mut Transform, &mut Velocity, &mut Grounded), With<Player>>,
+    mut q: Query<
+        (
+            &mut Transform,
+            &mut Velocity,
+            &mut Grounded,
+            &mut CoyoteTime,
+            &mut Sneaking,
+        ),
+        With<Player>,
+    >,
 ) {
     let dt = time.delta_secs();
 
-    for (mut transform, mut vel, mut grounded) in q.iter_mut() {
-        let speed = if input.sprinting {
+    for (mut transform, mut vel, mut grounded, mut coyote, mut sneaking) in q.iter_mut() {
+        // Sneak takes priority over sprint; sprint ignored while sneaking.
+        sneaking.0 = input.sneaking;
+
+        let speed = if sneaking.0 {
+            SNEAK_SPEED
+        } else if input.sprinting {
             SPRINT_SPEED
         } else {
             WALK_SPEED
@@ -81,9 +120,12 @@ pub fn move_player(
         vel.0.x = wish.x;
         vel.0.z = wish.z;
 
-        if input.jump && grounded.0 {
+        let can_jump = grounded.0 || (coyote.timer < COYOTE_DURATION && !coyote.consumed);
+
+        if input.jump && can_jump {
             vel.0.y = JUMP_FORCE;
             grounded.0 = false;
+            coyote.consumed = true;
         }
 
         let delta = vel.0 * dt;
@@ -112,7 +154,6 @@ fn try_move(pos: Vec3, delta: Vec3, chunks: &Query<(&Chunk, &ChunkCoordComp)>) -
     }
 }
 
-/// Guess the collision of the player
 fn collides_with_world(pos: Vec3, chunks: &Query<(&Chunk, &ChunkCoordComp)>) -> bool {
     let hw = PLAYER_WIDTH * 0.5;
     let corners = [
@@ -130,7 +171,6 @@ fn collides_with_world(pos: Vec3, chunks: &Query<(&Chunk, &ChunkCoordComp)>) -> 
     corners.iter().any(|c| is_solid_at(*c, chunks))
 }
 
-/// Guess if the player is touching the ground
 fn is_on_ground(pos: Vec3, chunks: &Query<(&Chunk, &ChunkCoordComp)>) -> bool {
     let hw = PLAYER_WIDTH * 0.5;
     let feet = pos.y - 0.05;
@@ -144,13 +184,11 @@ fn is_on_ground(pos: Vec3, chunks: &Query<(&Chunk, &ChunkCoordComp)>) -> bool {
     .any(|c| is_solid_at(*c, chunks))
 }
 
-/// Guess if the player is in another collider
 pub fn is_solid_at(world_pos: Vec3, chunks: &Query<(&Chunk, &ChunkCoordComp)>) -> bool {
     let bx = world_pos.x.floor() as i32;
     let by = world_pos.y.floor() as i32;
     let bz = world_pos.z.floor() as i32;
 
-    // World limit
     if by < 0 {
         return true;
     }
@@ -171,7 +209,6 @@ pub fn is_solid_at(world_pos: Vec3, chunks: &Query<(&Chunk, &ChunkCoordComp)>) -
     false
 }
 
-/// Public query-compatible block lookup used by input/raycast.
 pub fn block_at_world(pos: IVec3, chunks: &Query<(&Chunk, &ChunkCoordComp)>) -> BlockType {
     if pos.y < 0 || pos.y >= CHUNK_HEIGHT as i32 {
         return BlockType::Air;
