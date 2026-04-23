@@ -77,6 +77,8 @@ pub enum ServerPacket {
     },
     /// Batch of block mutations (e.g. initial delta for already-modified chunks).
     BlockBatch { updates: Vec<BlockUpdateEntry> },
+    /// Time of day
+    TimeUpdate { time: f32 },
     /// Keepalive — client must reply with Pong.
     Ping { id: u32 },
     /// Server rejected the connection.
