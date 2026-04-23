@@ -10,21 +10,54 @@ pub struct RenderingPlugin;
 
 impl Plugin for RenderingPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, (spawn_sun, spawn_hud))
-            .add_systems(Update, (update_hotbar_ui, update_break_progress));
+        app.insert_resource(ClearColor(Color::srgb(0.5, 0.7, 1.0)))
+            .init_resource::<ServerTime>()
+            .add_systems(Startup, (spawn_lights, spawn_hud))
+            .add_systems(
+                Update,
+                (
+                    update_hotbar_ui,
+                    update_break_progress,
+                    sync_time_from_net,
+                    update_day_night_cycle,
+                )
+                    .chain(),
+            );
     }
 }
 
-/// Spawn a fake sun, TODO: make real sun (https://bevy.org/examples-webgpu/3d-rendering/atmosphere/)
-fn spawn_sun(mut commands: Commands) {
+#[derive(Resource, Default)]
+struct ServerTime {
+    base_time: f32,
+    local_timer: f32,
+}
+
+fn sync_time_from_net(mut ev: MessageReader<crate::net::EvTimeUpdate>, mut st: ResMut<ServerTime>) {
+    if let Some(e) = ev.read().last() {
+        st.base_time = e.time;
+        st.local_timer = 0.0;
+    }
+}
+
+#[derive(Component)]
+struct Sun;
+
+fn spawn_lights(mut commands: Commands) {
     commands.spawn((
         DirectionalLight {
             illuminance: 20_000.0,
             shadows_enabled: true,
             ..default()
         },
-        Transform::from_rotation(Quat::from_euler(EulerRot::ZYX, 0.0, PI / 4.0, -PI / 3.0)),
+        Transform::from_xyz(0.0, 500.0, 0.0).looking_at(Vec3::ZERO, Vec3::Y),
+        Sun,
     ));
+
+    commands.spawn(AmbientLight {
+        color: Color::WHITE,
+        brightness: 150.0,
+        ..default()
+    });
 }
 
 #[derive(Component)]
@@ -183,5 +216,43 @@ fn update_break_progress(
             node.width = Val::Px(pct * 120.0);
             *color = BackgroundColor(Color::srgba(1.0, 0.3 + pct * 0.4, 0.1, 0.9));
         }
+    }
+}
+
+fn update_day_night_cycle(
+    time: Res<Time>,
+    mut st: ResMut<ServerTime>,
+    mut sun_query: Query<(&mut Transform, &mut DirectionalLight), With<Sun>>,
+    mut ambient_query: Query<&mut AmbientLight>,
+    mut clear_color: ResMut<ClearColor>,
+) {
+    let Ok((mut transform, mut light)) = sun_query.single_mut() else {
+        return;
+    };
+
+    st.local_timer += time.delta_secs();
+    let current_time = st.base_time + st.local_timer;
+
+    let cycle_duration = 60.0;
+    let t = (current_time % cycle_duration) / cycle_duration;
+    let angle = t * PI * 2.0;
+    let sun_dist = 500.0;
+
+    transform.translation = Vec3::new(angle.cos() * sun_dist, angle.sin() * sun_dist, 50.0);
+    transform.look_at(Vec3::ZERO, Vec3::Y);
+
+    let sun_height = angle.sin();
+    light.illuminance = (sun_height * 20_000.0).max(0.0);
+
+    let day_factor = (sun_height * 2.0).clamp(0.0, 1.0);
+
+    let day_sky = Vec3::new(0.5, 0.7, 1.0);
+    let night_sky = Vec3::new(0.02, 0.02, 0.05);
+    let sky_rgb = night_sky.lerp(day_sky, day_factor);
+
+    *clear_color = ClearColor(Color::srgb(sky_rgb.x, sky_rgb.y, sky_rgb.z));
+
+    if let Ok(mut ambient_light) = ambient_query.single_mut() {
+        ambient_light.brightness = 20.0 + (day_factor * 130.0);
     }
 }

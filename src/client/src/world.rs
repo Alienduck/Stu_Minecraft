@@ -5,7 +5,7 @@ use shared::{
     generator::TerrainGenerator,
 };
 
-use crate::net::{EvBlockUpdate, EvWelcome};
+use crate::net::{EvBlockUpdate, EvWelcome, NetSender};
 
 pub use shared::chunk::{CHUNK_HEIGHT, Chunk};
 
@@ -34,6 +34,7 @@ fn on_welcome(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     existing: Query<Entity, With<ChunkCoordComp>>,
+    sender: Res<NetSender>,
 ) {
     let Some(welcome) = ev.read().last() else {
         return;
@@ -73,6 +74,11 @@ fn on_welcome(
             ));
         }
     }
+    let _ = sender
+        .0
+        .lock()
+        .unwrap()
+        .send(shared::protocol::ClientPacket::Ready);
 }
 
 /// Apply a server-authoritative block update to the matching chunk entity.
