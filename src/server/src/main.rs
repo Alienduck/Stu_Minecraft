@@ -129,6 +129,8 @@ impl World {
 struct Server {
     socket: UdpSocket,
     world: World,
+    start_time: Instant,
+    last_time_sync: Instant,
     players: HashMap<SocketAddr, ConnectedPlayer>,
     next_id: PlayerId,
     last_ping: Instant,
@@ -144,6 +146,8 @@ impl Server {
         Ok(Self {
             socket,
             world: World::new(SEED),
+            start_time: Instant::now(),
+            last_time_sync: Instant::now(),
             players: HashMap::new(),
             next_id: 1,
             last_ping: Instant::now(),
@@ -156,8 +160,17 @@ impl Server {
         loop {
             self.recv_all();
             self.keepalive();
+            self.sync_time();
             self.drop_timed_out();
             std::thread::sleep(TICK_SLEEP);
+        }
+    }
+
+    fn sync_time(&mut self) {
+        if self.last_time_sync.elapsed() >= Duration::from_secs(1) {
+            self.last_time_sync = Instant::now();
+            let time = self.start_time.elapsed().as_secs_f32();
+            self.broadcast_all(&ServerPacket::TimeUpdate { time });
         }
     }
 
