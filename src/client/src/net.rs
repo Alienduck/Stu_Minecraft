@@ -54,6 +54,11 @@ pub struct EvPlayerMoved {
     pub pitch: f32,
 }
 
+#[derive(Message, Debug, Clone)]
+pub struct EvTimeUpdate {
+    pub time: f32,
+}
+
 pub struct NetPlugin;
 
 impl Plugin for NetPlugin {
@@ -79,6 +84,7 @@ impl Plugin for NetPlugin {
             .add_message::<EvPlayerJoined>()
             .add_message::<EvPlayerLeft>()
             .add_message::<EvPlayerMoved>()
+            .add_message::<EvTimeUpdate>()
             .add_systems(Startup, send_connect)
             .add_systems(PreUpdate, dispatch_incoming);
     }
@@ -141,6 +147,7 @@ fn dispatch_incoming(
     mut ev_joined: MessageWriter<EvPlayerJoined>,
     mut ev_left: MessageWriter<EvPlayerLeft>,
     mut ev_moved: MessageWriter<EvPlayerMoved>,
+    mut ev_time: MessageWriter<EvTimeUpdate>,
     sender: Res<NetSender>,
 ) {
     let rx = receiver.0.lock().unwrap();
@@ -153,6 +160,7 @@ fn dispatch_incoming(
                 &mut ev_joined,
                 &mut ev_left,
                 &mut ev_moved,
+                &mut ev_time,
                 &sender,
             ),
             Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => break,
@@ -167,6 +175,7 @@ fn handle_server_packet(
     ev_joined: &mut MessageWriter<EvPlayerJoined>,
     ev_left: &mut MessageWriter<EvPlayerLeft>,
     ev_moved: &mut MessageWriter<EvPlayerMoved>,
+    ev_time: &mut MessageWriter<EvTimeUpdate>,
     sender: &NetSender,
 ) {
     match pkt {
@@ -182,7 +191,6 @@ fn handle_server_packet(
                 seed,
                 spawn: Vec3::new(spawn_x, spawn_y, spawn_z),
             });
-            let _ = sender.0.lock().unwrap().send(ClientPacket::Ready);
         }
         ServerPacket::BlockUpdate {
             coord,
@@ -240,6 +248,9 @@ fn handle_server_packet(
                 yaw,
                 pitch,
             });
+        }
+        ServerPacket::TimeUpdate { time } => {
+            ev_time.write(EvTimeUpdate { time });
         }
         // Was used for testing and now for keepalive 🗿
         ServerPacket::Ping { id } => {
