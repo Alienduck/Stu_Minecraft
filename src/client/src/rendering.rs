@@ -20,7 +20,6 @@ impl Plugin for RenderingPlugin {
                     update_break_progress,
                     sync_time_from_net,
                     update_day_night_cycle,
-                    super::player::apply_player_tints,
                 )
                     .chain(),
             );
