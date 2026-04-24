@@ -25,6 +25,7 @@ impl Plugin for InputPlugin {
                 Update,
                 (
                     handle_keyboard,
+                    handle_mouse,
                     handle_mouse_look,
                     handle_scroll,
                     handle_breaking,
@@ -83,6 +84,10 @@ fn handle_keyboard(keys: Res<ButtonInput<KeyCode>>, mut input: ResMut<MovementIn
     input.jump = keys.pressed(KeyCode::Space);
     input.sprinting = keys.pressed(KeyCode::ShiftLeft);
     input.sneaking = keys.pressed(KeyCode::ControlLeft);
+}
+
+fn handle_mouse(mouse: Res<ButtonInput<MouseButton>>, mut input: ResMut<MovementInput>) {
+    input.sneaking = mouse.pressed(MouseButton::Back);
 }
 
 fn handle_mouse_look(
