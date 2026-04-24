@@ -3,7 +3,7 @@ use std::f32::consts::PI;
 
 use crate::{
     input::BreakState,
-    player::{Player, inventory::Inventory},
+    player::{NameTag, Player, RemotePlayer, inventory::Inventory},
 };
 
 pub struct RenderingPlugin;
@@ -20,6 +20,7 @@ impl Plugin for RenderingPlugin {
                     update_break_progress,
                     sync_time_from_net,
                     update_day_night_cycle,
+                    update_billboard,
                 )
                     .chain(),
             );
@@ -320,5 +321,32 @@ fn update_day_night_cycle(
 
     if let Ok(mut ambient_light) = ambient_query.single_mut() {
         ambient_light.brightness = 20.0 + (day_factor * 130.0);
+    }
+}
+
+fn update_billboard(
+    mut commands: Commands,
+    camera_q: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
+    player_q: Query<&GlobalTransform, (With<RemotePlayer>, Without<NameTag>)>,
+    mut tags_q: Query<(Entity, &mut Node, &NameTag)>,
+) {
+    let Some((camera, cam_global)) = camera_q.iter().next() else {
+        return;
+    };
+
+    for (entity, mut node, tag) in tags_q.iter_mut() {
+        if let Ok(player_global) = player_q.get(tag.target) {
+            let world_pos = player_global.translation() + Vec3::new(0.0, 2.2, 0.0);
+
+            if let Ok(screen_pos) = camera.world_to_viewport(cam_global, world_pos) {
+                node.display = Display::Flex;
+                node.left = Val::Px(screen_pos.x - 30.0);
+                node.top = Val::Px(screen_pos.y);
+            } else {
+                node.display = Display::None;
+            }
+        } else {
+            commands.entity(entity).despawn();
+        }
     }
 }
