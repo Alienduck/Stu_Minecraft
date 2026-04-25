@@ -10,7 +10,9 @@ pub const MAX_PACKET_SIZE: usize = 1024;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ClientPacket {
     /// Initial handshake.
-    Connect { name: String },
+    Connect {
+        name: String,
+    },
     /// Client acknowledges it has loaded the world seed and is ready.
     Ready,
     /// Player position + look, sent every frame (unreliable).
@@ -22,7 +24,11 @@ pub enum ClientPacket {
         pitch: f32,
     },
     /// Request to break a block at world coordinates.
-    BreakBlock { wx: i32, wy: i32, wz: i32 },
+    BreakBlock {
+        wx: i32,
+        wy: i32,
+        wz: i32,
+    },
     /// Request to place a block at world coordinates.
     PlaceBlock {
         wx: i32,
@@ -30,8 +36,13 @@ pub enum ClientPacket {
         wz: i32,
         block: BlockType,
     },
+    ChatMessage {
+        text: String,
+    },
     /// Keepalive reply.
-    Pong { id: u32 },
+    Pong {
+        id: u32,
+    },
     /// Graceful disconnect.
     Disconnect,
 }
@@ -79,6 +90,10 @@ pub enum ServerPacket {
     BlockBatch { updates: Vec<BlockUpdateEntry> },
     /// Time of day
     TimeUpdate { time: f32 },
+    ChatMessage {
+        sender_name: String,
+        message: String,
+    },
     /// Keepalive — client must reply with Pong.
     Ping { id: u32 },
     /// Server rejected the connection.
