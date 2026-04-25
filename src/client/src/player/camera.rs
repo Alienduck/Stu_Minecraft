@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
 use super::Player;
-use crate::input::MovementInput;
+use crate::input::ActionsInput;
 
 pub struct PlayerCameraPlugin;
 
@@ -20,11 +20,16 @@ fn spawn_camera(mut commands: Commands) {
 }
 
 fn sync_camera_to_player(
-    input: Res<MovementInput>,
-    player: Query<&Transform, (With<Player>, Without<PlayerCamera>)>,
+    input: Res<ActionsInput>,
+    player_q: Query<(&Transform, &Player), Without<PlayerCamera>>,
     mut camera: Query<&mut Transform, (With<PlayerCamera>, Without<Player>)>,
 ) {
-    let Ok(pt) = player.single() else { return };
+    let Ok((pt, player)) = player_q.single() else {
+        return;
+    };
+    if player.gpe {
+        return;
+    }
     let Ok(mut ct) = camera.single_mut() else {
         return;
     };
