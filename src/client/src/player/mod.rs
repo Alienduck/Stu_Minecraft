@@ -9,8 +9,11 @@ pub use inventory::Inventory;
 
 use crate::net::{EvPlayerJoined, EvPlayerLeft, EvPlayerMoved, EvWelcome};
 
-#[derive(Component)]
-pub struct Player;
+#[derive(Component, Default)]
+pub struct Player {
+    /// Game Processed Event, is when the player is interacting with UI
+    pub gpe: bool,
+}
 
 #[derive(Component)]
 pub struct RemotePlayer {
@@ -54,7 +57,7 @@ fn on_welcome_spawn_player(
     }
 
     commands.spawn((
-        Player,
+        Player::default(),
         Inventory::new(),
         Transform::from_translation(welcome.spawn),
         Visibility::default(),
