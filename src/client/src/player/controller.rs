@@ -6,7 +6,7 @@ use shared::{
 };
 
 use crate::{
-    input::MovementInput,
+    input::ActionsInput,
     world::{Chunk, ChunkCoordComp},
 };
 
@@ -70,7 +70,7 @@ pub fn apply_gravity(
 
 pub fn move_player(
     time: Res<Time>,
-    input: Res<MovementInput>,
+    input: Res<ActionsInput>,
     chunks: Query<(&Chunk, &ChunkCoordComp)>,
     mut q: Query<
         (
