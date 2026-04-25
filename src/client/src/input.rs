@@ -18,7 +18,7 @@ pub struct InputPlugin;
 
 impl Plugin for InputPlugin {
     fn build(&self, app: &mut App) {
-        app.insert_resource(MovementInput::default())
+        app.insert_resource(ActionsInput::default())
             .insert_resource(BreakState::default())
             .add_systems(Startup, grab_cursor)
             .add_systems(
@@ -38,7 +38,7 @@ impl Plugin for InputPlugin {
 }
 
 #[derive(Resource, Default)]
-pub struct MovementInput {
+pub struct ActionsInput {
     pub forward: bool,
     pub backward: bool,
     pub left: bool,
@@ -63,9 +63,13 @@ fn grab_cursor(mut cursor: Single<&mut CursorOptions, With<PrimaryWindow>>) {
 
 fn toggle_cursor_grab(
     keys: Res<ButtonInput<KeyCode>>,
+    player_q: Query<&Player>,
     mut cursor: Single<&mut CursorOptions, With<PrimaryWindow>>,
 ) {
-    if keys.just_pressed(KeyCode::Escape) {
+    let Ok(player) = player_q.single() else {
+        return;
+    };
+    if keys.just_pressed(KeyCode::Escape) && !player.gpe {
         let locked = cursor.grab_mode == CursorGrabMode::Locked;
         cursor.grab_mode = if locked {
             CursorGrabMode::None
@@ -76,7 +80,17 @@ fn toggle_cursor_grab(
     }
 }
 
-fn handle_keyboard(keys: Res<ButtonInput<KeyCode>>, mut input: ResMut<MovementInput>) {
+fn handle_keyboard(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut input: ResMut<ActionsInput>,
+    player_q: Query<&Player>,
+) {
+    let Ok(player) = player_q.single() else {
+        return;
+    };
+    if player.gpe {
+        return;
+    }
     input.forward = keys.pressed(KeyCode::KeyW);
     input.backward = keys.pressed(KeyCode::KeyS);
     input.left = keys.pressed(KeyCode::KeyA);
@@ -86,16 +100,33 @@ fn handle_keyboard(keys: Res<ButtonInput<KeyCode>>, mut input: ResMut<MovementIn
     input.sneaking = keys.pressed(KeyCode::ControlLeft);
 }
 
-fn handle_mouse(mouse: Res<ButtonInput<MouseButton>>, mut input: ResMut<MovementInput>) {
+fn handle_mouse(
+    mouse: Res<ButtonInput<MouseButton>>,
+    mut input: ResMut<ActionsInput>,
+    player_q: Query<&Player>,
+) {
+    let Ok(player) = player_q.single() else {
+        return;
+    };
+    if player.gpe {
+        return;
+    }
     input.sneaking = mouse.pressed(MouseButton::Back);
 }
 
 fn handle_mouse_look(
     cursor: Single<&CursorOptions, With<PrimaryWindow>>,
+    player_q: Query<&Player>,
     mut motion: MessageReader<MouseMotion>,
-    mut input: ResMut<MovementInput>,
+    mut input: ResMut<ActionsInput>,
 ) {
     if cursor.grab_mode != CursorGrabMode::Locked {
+        return;
+    }
+    let Ok(player) = player_q.single() else {
+        return;
+    };
+    if player.gpe {
         return;
     }
     const SENSITIVITY: f32 = 0.002;
@@ -110,22 +141,30 @@ fn handle_mouse_look(
 
 fn handle_scroll(
     mut scroll: MessageReader<MouseWheel>,
-    mut player: Query<&mut Inventory, With<Player>>,
+    mut player_q: Query<(&mut Inventory, &Player)>,
 ) {
-    let Ok(mut inv) = player.single_mut() else {
+    let Ok((mut inv, player)) = player_q.single_mut() else {
         return;
     };
+    if player.gpe {
+        return;
+    }
     for e in scroll.read() {
         inv.scroll(e.y);
     }
 }
 
 fn send_player_position(
-    input: Res<MovementInput>,
-    player: Query<&Transform, With<Player>>,
+    input: Res<ActionsInput>,
+    player: Query<(&Transform, &Player)>,
     sender: Res<NetSender>,
 ) {
-    let Ok(t) = player.single() else { return };
+    let Ok((t, player)) = player.single() else {
+        return;
+    };
+    if player.gpe {
+        return;
+    }
     let _ = sender.0.lock().unwrap().send(ClientPacket::Move {
         x: t.translation.x,
         y: t.translation.y,
@@ -140,7 +179,7 @@ fn handle_breaking(
     mouse: Res<ButtonInput<MouseButton>>,
     cursor: Single<&CursorOptions, With<PrimaryWindow>>,
     camera: Query<&Transform, With<PlayerCamera>>,
-    mut player: Query<&mut Inventory, With<Player>>,
+    mut player_q: Query<(&mut Inventory, &Player)>,
     chunks: Query<(&Chunk, &ChunkCoordComp)>,
     mut state: ResMut<BreakState>,
     sender: Res<NetSender>,
@@ -148,6 +187,12 @@ fn handle_breaking(
     if cursor.grab_mode != CursorGrabMode::Locked {
         state.target = None;
         state.progress = 0.0;
+        return;
+    }
+    let Ok((mut inv, player)) = player_q.single_mut() else {
+        return;
+    };
+    if player.gpe {
         return;
     }
 
@@ -189,9 +234,7 @@ fn handle_breaking(
         state.target = None;
         state.progress = 0.0;
 
-        if let Ok(mut inv) = player.single_mut() {
-            inv.add(block_type);
-        }
+        inv.add(block_type);
 
         let _ = sender.0.lock().unwrap().send(ClientPacket::BreakBlock {
             wx: target.x,
@@ -205,7 +248,7 @@ fn handle_place(
     mouse: Res<ButtonInput<MouseButton>>,
     cursor: Single<&CursorOptions, With<PrimaryWindow>>,
     camera: Query<&Transform, With<PlayerCamera>>,
-    mut player: Query<&mut Inventory, With<Player>>,
+    mut player_q: Query<(&mut Inventory, &Player)>,
     chunks: Query<(&Chunk, &ChunkCoordComp)>,
     sender: Res<NetSender>,
 ) {
@@ -215,11 +258,14 @@ fn handle_place(
     if !mouse.just_pressed(MouseButton::Right) {
         return;
     }
-
-    let Ok(cam) = camera.single() else { return };
-    let Ok(mut inv) = player.single_mut() else {
+    let Ok((mut inv, player)) = player_q.single_mut() else {
         return;
     };
+    if player.gpe {
+        return;
+    }
+
+    let Ok(cam) = camera.single() else { return };
 
     let Some((hit_pos, normal)) = raycast(cam.translation, cam.forward().as_vec3(), 6.0, &chunks)
     else {
