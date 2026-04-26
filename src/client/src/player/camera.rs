@@ -1,13 +1,12 @@
-use bevy::prelude::*;
-
 use super::Player;
 use crate::input::ActionsInput;
+use bevy::prelude::*;
 
 pub struct PlayerCameraPlugin;
 
 impl Plugin for PlayerCameraPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, spawn_camera)
+        app.add_systems(PreStartup, spawn_camera)
             .add_systems(Update, sync_camera_to_player);
     }
 }
@@ -16,7 +15,12 @@ impl Plugin for PlayerCameraPlugin {
 pub struct PlayerCamera;
 
 fn spawn_camera(mut commands: Commands) {
-    commands.spawn((Camera3d::default(), Transform::default(), PlayerCamera));
+    commands.spawn((
+        Camera3d::default(),
+        Transform::default(),
+        PlayerCamera,
+        IsDefaultUiCamera,
+    ));
 }
 
 fn sync_camera_to_player(
