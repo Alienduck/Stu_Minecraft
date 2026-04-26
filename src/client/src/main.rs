@@ -1,3 +1,4 @@
+mod chat;
 mod input;
 mod net;
 mod player;
@@ -22,6 +23,7 @@ fn main() {
             player::PlayerPlugin,
             input::InputPlugin,
             rendering::RenderingPlugin,
+            chat::ChatPlugin,
         ))
         .run();
 }

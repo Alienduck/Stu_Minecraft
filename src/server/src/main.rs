@@ -221,6 +221,9 @@ impl Server {
             ClientPacket::PlaceBlock { wx, wy, wz, block } => {
                 self.on_place(addr, wx, wy, wz, block);
             }
+            ClientPacket::ChatMessage { text } => {
+                self.text(addr, text);
+            }
             ClientPacket::Pong { id } => self.on_pong(addr, id),
             ClientPacket::Disconnect => self.on_disconnect(addr),
         }
@@ -369,6 +372,19 @@ impl Server {
             ly: entry.ly,
             lz: entry.lz,
             block: entry.block,
+        };
+        self.broadcast_all(&pkt);
+    }
+
+    fn text(&mut self, addr: SocketAddr, message: String) {
+        let client_id = self.players.get(&addr);
+        let Some(client) = client_id else {
+            return;
+        };
+        let client_name = &client.name;
+        let pkt = ServerPacket::ChatMessage {
+            sender_name: client_name.into(),
+            message,
         };
         self.broadcast_all(&pkt);
     }
