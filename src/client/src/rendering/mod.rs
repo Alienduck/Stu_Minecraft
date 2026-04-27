@@ -1,3 +1,9 @@
+// src/client/src/rendering/mod.rs
+
+pub mod fog_pass;
+pub mod lens_flare;
+pub mod water_material;
+
 use bevy::prelude::*;
 use std::f32::consts::PI;
 
@@ -6,11 +12,16 @@ use crate::{
     player::{NameTag, Player, RemotePlayer, inventory::Inventory},
 };
 
+use fog_pass::FogPostProcessPlugin;
+use lens_flare::LensFlarePlugin;
+use water_material::WaterMaterialPlugin;
+
 pub struct RenderingPlugin;
 
 impl Plugin for RenderingPlugin {
     fn build(&self, app: &mut App) {
-        app.insert_resource(ClearColor(Color::srgb(0.5, 0.7, 1.0)))
+        app.add_plugins((WaterMaterialPlugin, LensFlarePlugin, FogPostProcessPlugin))
+            .insert_resource(ClearColor(Color::srgb(0.5, 0.7, 1.0)))
             .init_resource::<ServerTime>()
             .add_systems(Startup, (spawn_lights, spawn_hud, spawn_celestial_bodies))
             .add_systems(
@@ -27,6 +38,18 @@ impl Plugin for RenderingPlugin {
     }
 }
 
+// ── Markers ──────────────────────────────────────────────────────────────────
+
+/// Marks the sun directional light AND the sun mesh.
+#[derive(Component)]
+pub struct Sun;
+
+/// Marks the moon mesh.
+#[derive(Component)]
+pub struct Moon;
+
+// ── Resources ────────────────────────────────────────────────────────────────
+
 #[derive(Resource, Default)]
 struct ServerTime {
     base_time: f32,
@@ -40,29 +63,38 @@ fn sync_time_from_net(mut ev: MessageReader<crate::net::EvTimeUpdate>, mut st: R
     }
 }
 
-#[derive(Component)]
-struct Sun;
-
-#[derive(Component)]
-struct Moon;
-
-/// Orbit radius for both celestial bodies (large enough to always be visible).
 const ORBIT_RADIUS: f32 = 450.0;
 
+// ── Startup ───────────────────────────────────────────────────────────────────
+
 fn spawn_lights(mut commands: Commands) {
+    // ONE directional light for the sun — driven by update_day_night_cycle.
+    // Do NOT spawn another one in camera.rs.
+    let shadows = bevy::light::CascadeShadowConfigBuilder {
+        num_cascades: 4,
+        maximum_distance: 120.0,
+        first_cascade_far_bound: 6.0,
+        overlap_proportion: 0.3,
+        ..default()
+    }
+    .build();
+
     commands.spawn((
         DirectionalLight {
             illuminance: 20_000.0,
             shadows_enabled: true,
+            shadow_depth_bias: 0.02,
+            shadow_normal_bias: 1.8,
             ..default()
         },
+        shadows,
         Transform::from_xyz(0.0, 500.0, 0.0).looking_at(Vec3::ZERO, Vec3::Y),
         Sun,
     ));
 
     commands.spawn(AmbientLight {
-        color: Color::WHITE,
-        brightness: 150.0,
+        color: Color::srgb(0.6, 0.65, 0.8),
+        brightness: 180.0,
         ..default()
     });
 }
@@ -72,10 +104,11 @@ fn spawn_celestial_bodies(
     mut meshes: ResMut<Assets<Mesh>>,
     mut mats: ResMut<Assets<StandardMaterial>>,
 ) {
+    // Sun mesh — strong emissive so Bloom picks it up
     let sun_mesh = meshes.add(Sphere::new(18.0).mesh().ico(3).unwrap());
     let sun_mat = mats.add(StandardMaterial {
-        base_color: Color::srgb(1.0, 0.95, 0.3),
-        emissive: LinearRgba::new(4.0, 3.6, 0.2, 1.0),
+        base_color: Color::srgb(1.0, 0.97, 0.5),
+        emissive: LinearRgba::new(6.0, 5.0, 1.5, 1.0),
         unlit: true,
         ..default()
     });
@@ -86,10 +119,11 @@ fn spawn_celestial_bodies(
         Sun,
     ));
 
+    // Moon mesh
     let moon_mesh = meshes.add(Sphere::new(10.0).mesh().ico(2).unwrap());
     let moon_mat = mats.add(StandardMaterial {
         base_color: Color::srgb(0.85, 0.87, 0.92),
-        emissive: LinearRgba::new(0.15, 0.15, 0.20, 1.0),
+        emissive: LinearRgba::new(0.2, 0.22, 0.28, 1.0),
         unlit: true,
         ..default()
     });
@@ -100,6 +134,8 @@ fn spawn_celestial_bodies(
         Moon,
     ));
 }
+
+// ── HUD ───────────────────────────────────────────────────────────────────────
 
 #[derive(Component)]
 struct HotbarSlot(usize);
@@ -210,13 +246,14 @@ fn spawn_hud(mut commands: Commands) {
         });
 }
 
+// ── Update ────────────────────────────────────────────────────────────────────
+
 fn update_hotbar_ui(
     player: Query<&Inventory, With<Player>>,
     mut slots: Query<(&HotbarSlot, &mut BorderColor)>,
     mut counts: Query<(&HotbarCount, &mut Text)>,
 ) {
     let Ok(inv) = player.single() else { return };
-
     for (slot, mut border) in slots.iter_mut() {
         let color = if slot.0 == inv.selected_slot {
             Color::WHITE
@@ -230,7 +267,6 @@ fn update_hotbar_ui(
             right: color,
         };
     }
-
     for (count_marker, mut text) in counts.iter_mut() {
         **text = inv.slot_count(count_marker.0).to_string();
     }
@@ -243,7 +279,6 @@ fn update_break_progress(
     let Ok((mut node, mut color)) = bar.single_mut() else {
         return;
     };
-
     match state.target {
         None => {
             node.width = Val::Px(0.0);
@@ -259,7 +294,9 @@ fn update_break_progress(
 fn update_day_night_cycle(
     time: Res<Time>,
     mut st: ResMut<ServerTime>,
-    mut dir_light_q: Query<(&mut Transform, &mut DirectionalLight), With<Sun>>,
+    // Query only the entity that has BOTH Sun AND DirectionalLight
+    mut sun_light_q: Query<(&mut Transform, &mut DirectionalLight), With<Sun>>,
+    // Query only the Sun entity that has a Mesh3d (not the light)
     mut sun_mesh_q: Query<
         &mut Transform,
         (
@@ -276,21 +313,21 @@ fn update_day_night_cycle(
     st.local_timer += time.delta_secs();
     let current_time = st.base_time + st.local_timer;
 
-    let cycle_duration = 600.0;
+    let cycle_duration = 600.0_f32;
     let t = (current_time % cycle_duration) / cycle_duration;
     let angle = t * PI * 2.0;
 
-    if let Ok((mut transform, mut light)) = dir_light_q.single_mut() {
-        let sun_dir = Vec3::new(angle.cos() * ORBIT_RADIUS, angle.sin() * ORBIT_RADIUS, 50.0);
-        transform.translation = sun_dir;
-        transform.look_at(Vec3::ZERO, Vec3::Y);
+    let sun_pos = Vec3::new(angle.cos() * ORBIT_RADIUS, angle.sin() * ORBIT_RADIUS, 50.0);
 
-        let sun_height = angle.sin(); // 1 = noon, -1 = midnight
-        light.illuminance = (sun_height * 20_000.0).max(0.0);
+    if let Ok((mut transform, mut light)) = sun_light_q.single_mut() {
+        transform.translation = sun_pos;
+        transform.look_at(Vec3::ZERO, Vec3::Y);
+        let sun_height = angle.sin();
+        light.illuminance = (sun_height * 22_000.0).max(0.0);
     }
 
     if let Ok(mut t) = sun_mesh_q.single_mut() {
-        t.translation = Vec3::new(angle.cos() * ORBIT_RADIUS, angle.sin() * ORBIT_RADIUS, 50.0);
+        t.translation = sun_pos;
     }
 
     if let Ok(mut t) = moon_mesh_q.single_mut() {
@@ -305,22 +342,22 @@ fn update_day_night_cycle(
     let sun_height = angle.sin();
     let day_factor = (sun_height * 2.0).clamp(0.0, 1.0);
 
-    let day_sky = Vec3::new(0.5, 0.7, 1.0);
-    let dusk_sky = Vec3::new(0.55, 0.25, 0.08);
-    let night_sky = Vec3::new(0.02, 0.02, 0.05);
+    let day_sky = Vec3::new(0.40, 0.65, 1.00);
+    let dusk_sky = Vec3::new(0.72, 0.30, 0.08);
+    let night_sky = Vec3::new(0.02, 0.02, 0.06);
 
     let sky_rgb = if sun_height > 0.0 {
         let dusk_factor = 1.0 - sun_height.abs().min(1.0);
-        day_sky.lerp(dusk_sky, dusk_factor * dusk_factor) * day_factor
-            + night_sky * (1.0 - day_factor)
+        let daytime = day_sky.lerp(dusk_sky, dusk_factor * dusk_factor);
+        daytime * day_factor + night_sky * (1.0 - day_factor)
     } else {
         night_sky
     };
 
     *clear_color = ClearColor(Color::srgb(sky_rgb.x, sky_rgb.y, sky_rgb.z));
 
-    if let Ok(mut ambient_light) = ambient_query.single_mut() {
-        ambient_light.brightness = 20.0 + (day_factor * 130.0);
+    if let Ok(mut al) = ambient_query.single_mut() {
+        al.brightness = 25.0 + day_factor * 155.0;
     }
 }
 
@@ -333,11 +370,9 @@ fn update_billboard(
     let Some((camera, cam_global)) = camera_q.iter().next() else {
         return;
     };
-
     for (entity, mut node, tag) in tags_q.iter_mut() {
         if let Ok(player_global) = player_q.get(tag.target) {
             let world_pos = player_global.translation() + Vec3::new(0.0, 2.2, 0.0);
-
             if let Ok(screen_pos) = camera.world_to_viewport(cam_global, world_pos) {
                 node.display = Display::Flex;
                 node.left = Val::Px(screen_pos.x - 30.0);

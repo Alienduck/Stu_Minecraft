@@ -1,9 +1,10 @@
+// src/client/src/player/camera.rs
+
 use super::Player;
 use crate::input::ActionsInput;
 use bevy::{
     core_pipeline::tonemapping::Tonemapping,
-    light::{CascadeShadowConfig, CascadeShadowConfigBuilder},
-    post_process::bloom::Bloom,
+    post_process::bloom::{Bloom, BloomCompositeMode, BloomPrefilter},
     prelude::*,
     render::view::Hdr,
 };
@@ -12,8 +13,9 @@ pub struct PlayerCameraPlugin;
 
 impl Plugin for PlayerCameraPlugin {
     fn build(&self, app: &mut App) {
+        // SSAO requires Msaa::Off — attach it to the camera entity.
+        // Even without SSAO, Msaa::Off improves performance with HDR bloom.
         app.add_systems(PreStartup, spawn_camera)
-            .add_systems(Startup, spawn_enhanced_sun)
             .add_systems(Update, sync_camera_to_player);
     }
 }
@@ -24,29 +26,24 @@ pub struct PlayerCamera;
 fn spawn_camera(mut commands: Commands) {
     commands.spawn((
         Camera3d::default(),
+        Msaa::Off,
         Hdr,
-        Bloom::NATURAL,
+        Bloom {
+            intensity: 0.18,
+            low_frequency_boost: 0.4,
+            low_frequency_boost_curvature: 0.65,
+            high_pass_frequency: 1.0,
+            prefilter: BloomPrefilter {
+                threshold: 0.85,
+                threshold_softness: 0.3,
+            },
+            composite_mode: BloomCompositeMode::Additive,
+            ..default()
+        },
         Tonemapping::TonyMcMapface,
         Transform::default(),
         PlayerCamera,
         IsDefaultUiCamera,
-    ));
-}
-
-fn spawn_enhanced_sun(mut commands: Commands) {
-    let shadows: CascadeShadowConfig = CascadeShadowConfigBuilder {
-        num_cascades: 4,
-        maximum_distance: 100.0,
-        ..default()
-    }
-    .into();
-    commands.spawn((
-        DirectionalLight {
-            illuminance: 50_000.0,
-            shadows_enabled: true,
-            ..default()
-        },
-        shadows,
     ));
 }
 

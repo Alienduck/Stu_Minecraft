@@ -1,10 +1,23 @@
 [package]
-name    = "client"
+name = "client"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-shared  = { path = "../shared" }
-bevy    = { workspace = true }
+shared = { path = "../shared" }
 bincode = { workspace = true }
-serde   = { workspace = true }
+serde = { workspace = true }
+
+[dependencies.bevy]
+workspace = true
+features = [
+    "bevy_picking",
+    # Needed for SSAO
+    "bevy_pbr",
+    # Needed for DepthOfField, ChromaticAberration, Bloom, PostProcess
+    "bevy_core_pipeline",
+    # HDR + tonemapping
+    "hdr",
+    # Custom material shaders
+    "shader_format_glsl",
+]
